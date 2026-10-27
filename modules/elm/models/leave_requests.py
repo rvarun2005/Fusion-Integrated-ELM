@@ -1,4 +1,4 @@
-﻿from django.db import models
+from django.db import models
 from django.db.models import Q
 from core.db.mixins import TimeStampedModel
 from modules.elm.domain.state_machine import Status
@@ -6,27 +6,46 @@ from modules.elm.models.leave_types import LeaveType
 
 
 class LeaveRequest(TimeStampedModel):
+    HALF_DAY_CHOICES = [
+        ("FULL", "Full Day"),
+        ("FIRST_HALF", "First Half"),
+        ("SECOND_HALF", "Second Half"),
+    ]
+
     employee_user_id = models.IntegerField(db_index=True)
     leave_type = models.ForeignKey(
         LeaveType, on_delete=models.PROTECT, related_name="requests"
     )
     start_date = models.DateField()
     end_date = models.DateField()
+    half_day_type = models.CharField(
+        max_length=16,
+        choices=HALF_DAY_CHOICES,
+        default="FULL",
+        help_text="Representation of half-day CL without floating-point fields",
+    )
     reason = models.TextField(max_length=2000)
     status = models.CharField(
-        max_length=32,
+        max_length=48,
         choices=[(status.value, status.value) for status in Status],
         default=Status.DRAFT.value,
         db_index=True,
     )
 
+    # Station Leave coupling (BR-EL-013)
+    is_station_leave = models.BooleanField(default=False)
+    station_leave_address = models.CharField(max_length=500, blank=True)
+    station_leave_contact = models.CharField(max_length=50, blank=True)
+
     class Meta:
         db_table = "elm_leave_request"
         constraints = [
             models.CheckConstraint(
-                check=Q(start_date__lte=models.F("end_date")),
+                condition=Q(start_date__lte=models.F("end_date")),
                 name="valid_date_range",
             ),
+        ]
+        indexes = [
             models.Index(
                 fields=["employee_user_id", "-created_at"],
                 name="employee_history",
@@ -38,7 +57,7 @@ class LeaveRequest(TimeStampedModel):
         ]
 
     def __str__(self):
-        return f"Leave request for {self.employee_user_id} from {self.start_date} to {self.end_date}"
+        return f"Leave request for {self.employee_user_id} from {self.start_date} to {self.end_date} ({self.status})"
 
 
 class LeaveRequestTransition(models.Model):
@@ -46,11 +65,11 @@ class LeaveRequestTransition(models.Model):
         LeaveRequest, on_delete=models.CASCADE, related_name="transitions"
     )
     from_status = models.CharField(
-        max_length=32,
+        max_length=48,
         choices=[(status.value, status.value) for status in Status],
     )
     to_status = models.CharField(
-        max_length=32,
+        max_length=48,
         choices=[(status.value, status.value) for status in Status],
     )
     actor_user_id = models.IntegerField(null=True, blank=True)
@@ -65,3 +84,6 @@ class LeaveRequestTransition(models.Model):
                 name="leave_request_desc_at",
             ),
         ]
+
+    def __str__(self):
+        return f"Transition {self.from_status} -> {self.to_status} for request {self.leave_request_id}"
